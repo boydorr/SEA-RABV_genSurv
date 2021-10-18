@@ -1,0 +1,341 @@
+---
+title: "RABV Sequence Partitioning code"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls())
+```
+#Set up libraries
+
+```{r}
+#install.packages("seqinr", repos="http://R-Forge.R-project.org")
+#BiocManager::install("seqinr")
+#source("http://bioconductor.org/biocLite.R")
+#biocLite(c("DESeq","topGO"))
+library("seqinr") #extracts partitions for beast
+#BiocManager::install("ORFik") 
+#open reading frame
+#BiocManager::install("DECIPHER")
+library(ORFik)
+library(DECIPHER)
+library(devtools)
+#install_github("thibautjombart/apex")
+#install.packages("apex")
+library("apex")
+library(stringr)
+library("Biostrings")
+library(sjPlot)
+library(ggplot2)
+library(sf)
+library(reshape)
+library("ggspatial")
+library(viridis)
+library(dplyr)
+```
+
+#Set up directory and output path, import alignment fasta file from RABV GLUE (to add additional sequences align in MAFFT then import)
+```{r}
+#input file
+file="/Users/emiliawilkins/Downloads/00- GitHub/SEA-RABV_genSurv/Sequences with matching metadata files/Aligned, Jal, R/All sequences+ Bacus/allSEA_aligned2.fasta"
+#output files
+dir.create(file.path(paste(dirname(file), "output.1", sep="/")), showWarnings = FALSE)
+#set output file location (same as input) and prefix
+newfiles=paste(dirname(file), "output.1", gsub(".fasta|.fst","",basename(file)), sep="/")
+```
+
+#Read alignments and format as string
+Import alignments and curations, read in as string set for open reading frame function then remove errors in alignment and replace file, remove "new" at beginning of some sequence names
+```{r}
+string=readDNAStringSet(file)
+string=RemoveGaps(string, removeGaps = "common")
+names(string) <- gsub("New|","",labels(string),fixed=T)
+names(string) <- vapply(strsplit(labels(string),".",fixed=T), `[`, 1, FUN.VALUE=character(1)) #extract sampleID from seq name
+writeXStringSet(string, paste0(newfiles, ".fasta"), format="fasta")
+#----------#----------
+# Partition into gene subsets
+# find most complete genome and search for ORFs
+chosen=which.max(str_count(string, "A|T|G|C"))
+#chosen.seq=RemoveGaps(string[chosen], removeGaps = "common")
+genes=as.data.frame(findORFs(string[chosen], startCodon = "ATG", minimumLength =200))
+```
+
+#Correct gene ORFs
+M and G gene were incorrectly defined, so the start position and gene length need to be manually inputted so the code can read the available sequences for that gene and re-define it. 
+
+M gene correction (needs to be 609)
+```{r}
+# it can't find the correct M gene start point so have to pull out manually
+genes=genes[order(genes$start),]
+genes=genes[-3,]
+find.m=as.data.frame(findORFs(string[chosen], startCodon = "ATG", minimumLength =200, longestORF = F))
+find.m=find.m[order(find.m$start),]
+m=find.m[which(find.m$start>=2468 & find.m$width==609),]
+genes=rbind(genes, m)
+```
+
+G gene needs correction (should be 1575)
+```{r}
+genes=genes[order(genes$start),]
+genes=genes[-4,]
+find.g=as.data.frame(findORFs(string[chosen], startCodon = "ATG", minimumLength =200, longestORF = F))
+find.g=find.g[order(find.g$start),]
+g=find.g[which(find.g$start>=3316 & find.g$width==1575),]
+genes=rbind(genes,g)
+```
+
+Label genes
+```{r}
+#Add new column with gene names
+genes=genes[order(genes$start),]
+genes=genes[,-c(1,2)]
+genes$gene=NA
+genes$gene=c("n","p","m","g","l")
+
+#new file with sequences associated with their gene
+seq=read.fasta(paste0(newfiles, ".fasta"))
+```
+
+#Partition alignment into genome region
+
+```{r}
+# split into coding partitions (5 genes)
+# based on ORF positions
+n=getFrag(seq, begin=genes$start[1],end=genes$end[1])
+p=getFrag(seq, begin=genes$start[2],end=genes$end[2])
+m=getFrag(seq, begin=genes$start[3],end=genes$end[3])
+g=getFrag(seq, begin=genes$start[4],end=genes$end[4])
+l=getFrag(seq, begin=genes$start[5],end=genes$end[5])
+
+# uncomment to output partitions as fasta files
+write.fasta(n,names=names(seq), paste(newfiles,"n.fasta",sep="_"))
+write.fasta(p,names=names(seq), paste(newfiles,"p.fasta",sep="_"))
+write.fasta(m,names=names(seq), paste(newfiles,"m.fasta",sep="_"))
+write.fasta(g,names=names(seq), paste(newfiles,"g.fasta",sep="_"))
+write.fasta(l,names=names(seq), paste(newfiles,"l.fasta",sep="_"))
+```
+
+#Prune alignments
+
+Get rid of empty spaces ("-") in partitioned genes
+```{r}
+#----------#----------#----------
+#remove empty sequence files carried into subsets
+# these will have "-" at each position
+#summariseAlignment is carried over from other code I have so contains more info than necessary. Requires file as input. Not pretty but does job!
+# this creates a table that sumamrise no of bases in each sequence (broken down into gaps (-), masked positions (n), ambigous (IUPAC codes), then sequence length after removing these)
+# can store output if you want e.g. 
+all=summariseAlignment("/Users/kirstyn/Documents/SEQUENCE_DATA/pemba/rabvGlue/ALL.aln.fasta")
+write.csv(all,"/path", row.names=F)
+```
+
+
+```{r}
+# pruneAlignment (again carried over from other code) needs summariseAlignment work. Uses summary to identify and removee empty seq from thee alignment. Again more elaborate than needs to be!
+summariseAlignment <- function(alignment){
+  aligned <- read.alignment(alignment, format = "fasta")
+  seq_data <- data.frame(ID = aligned$nam, N = NA, "gap" = NA, bases= NA, ambiguous=NA,
+                         Length_before = nchar(aligned$seq[[1]]), Length_after = NA)
+  
+  for (i in 1:length(aligned$seq)) {
+    seq_data$N[i] <- str_count(aligned$seq[[i]], pattern = 'n')
+    seq_data$gap[i] <- str_count(aligned$seq[[i]], pattern = '-')
+    seq_data$bases[i] <- sum(str_count(aligned$seq[[i]], pattern = c('a','c','t','g')))
+    seq_data$ambiguous[i] <- (seq_data$Length_before[i] - seq_data$N[i] - seq_data$gap[i]-seq_data$bases[i])
+    seq_data$Length_after[i] <- (seq_data$Length_before[i] - seq_data$N[i] - seq_data$gap[i])
+  }
+  return(seq_data)
+}
+pruneAlignment <- function(alignment){
+  seq_data <- summariseAlignment(alignment)
+  #eliminate bad seqeunces
+  badSeq <- seq_data[which(seq_data$Length_after< 100),]
+  fasta <- read.fasta(alignment)
+  #remove bad seq:
+  remove.badSeq=fasta[!names(fasta) %in% badSeq$ID]
+  print(paste0("original:", length(fasta), "; removed: ",length(fasta)-length(remove.badSeq), "; remaining: ",length(remove.badSeq)))
+  #remove.badEpi=badDate[which(badDate$published=="yes"),]
+  return(remove.badSeq)
+}
+```
+
+Create output fasta files with pruned alignment for each gene
+```{r}
+# usePrune on original subsets then write new "pruned" fasta as output. Will print how many were removed on console
+n.2=pruneAlignment(paste(newfiles,"n.fasta",sep="_"))
+#write.fasta(n.2,names=labels(n.2), paste(newfiles,"n_pruned.fasta",sep="_"))
+p.2=pruneAlignment(paste(newfiles,"p.fasta",sep="_"))
+#write.fasta(p.2,names=labels(p.2), paste(newfiles,"p_pruned.fasta",sep="_"))
+m.2=pruneAlignment(paste(newfiles,"m.fasta",sep="_"))
+#write.fasta(m.2,names=labels(m.2), paste(newfiles,"m_pruned.fasta",sep="_"))
+g.2=pruneAlignment(paste(newfiles,"g.fasta",sep="_"))
+#write.fasta(g.2,names=labels(g.2), paste(newfiles,"g_pruned.fasta",sep="_"))
+l.2=pruneAlignment(paste(newfiles,"l.fasta",sep="_"))
+#write.fasta(l.2,names=labels(l.2), paste(newfiles,"l_pruned.fasta",sep="_"))
+
+```
+
+#Subset metadata based on gene partitions
+```{r}
+#Import original metadata file (from RABV GLUE/including any sequences in the original fasta alignment file)
+meta=read.csv("metadata.csv", na.strings = c("NA","","-"))
+
+#Subset metadata to match IDs between alignment with specified gene and original metadata 
+set.n=meta[match(labels(n.2),meta$sequence.sequenceID,nomatch = 0),]
+#Gives any sequences that are not available in original metadata from sequence file
+missing=labels(n.2)[which(!labels(n.2) %in% meta$sequence.sequenceID)] ;missing
+#Output CSV into directory path
+write.csv(set.n, paste(newfiles, "n_meta.csv", sep="_"), row.names=F)
+#Output table into directory path
+write.table(set.n, paste(newfiles, "n_meta.txt", sep="_"), row.names=F, sep="\t", quote = FALSE)
+
+set.p=meta[match(labels(p.2),meta$sequence.sequenceID,nomatch = 0),]
+missing=labels(p.2)[which(!labels(p.2) %in% meta$sequence.sequenceID)] ;missing
+write.csv(set.p, paste(newfiles, "p_meta.csv", sep="_"), row.names=F)
+write.table(set.p, paste(newfiles, "p_meta.txt", sep="_"), row.names=F, sep="\t", quote = FALSE)
+
+set.l=meta[match(labels(l.2),meta$sequence.sequenceID,nomatch = 0),]
+missing=labels(l.2)[which(!labels(l.2) %in% meta$sequence.sequenceID)] ;missing
+write.csv(set.l, paste(newfiles, "l_meta.csv", sep="_"), row.names=F)
+write.table(set.l, paste(newfiles, "l_meta.txt", sep="_"), row.names=F, sep="\t", quote = FALSE)
+
+set.g=meta[match(labels(g.2),meta$sequence.sequenceID,nomatch = 0),]
+missing=labels(g.2)[which(!labels(g.2) %in% meta$sequence.sequenceID)] ;missing
+write.csv(set.g, paste(newfiles, "g_meta.csv", sep="_"), row.names=F)
+write.table(set.g, paste(newfiles, "g_meta.txt", sep="_"), row.names=F, sep="\t", quote = FALSE)
+
+set.m=meta[match(labels(m.2),meta$sequence.sequenceID,nomatch = 0),]
+missing=labels(m.2)[which(!labels(m.2) %in% meta$sequence.sequenceID)] ;missing
+write.csv(set.m, paste(newfiles, "m_meta.csv", sep="_"), row.names=F)
+write.table(set.m, paste(newfiles, "m_meta.txt", sep="_"), row.names=F, sep="\t", quote = FALSE)
+```
+
+#Define WGS in data
+```{r}
+wgs=meta[meta$sequence.gb_length>=10730,]
+a=c(length(n.2),length(p.2),length(m.2),length(g.2),length(l.2), nrow(wgs))
+barplot(a)
+write.csv(wgs, paste(newfiles, "wgs_meta.csv", sep="_"), row.names = F)
+write.fasta(wgs,names=names(seq), paste(newfiles,"wgs.fasta",sep="_"))
+```
+
+#Categorize sequence length: partial gene (fragment, <90%), whole gene (>90%), whole genome (uses alignment before partitioning to get multi/WGS data)
+```{r}
+#Cutoffs specific to gene defined
+set.n$length.cat<-cut(set.n$sequence.gb_length, c(0,1216,10730,11923),labels=c("pcr","gene", "wgs"))
+set.p$length.cat<-cut(set.p$sequence.gb_length, c(0,804,10730,11923),labels=c("pcr","gene", "wgs"))
+set.m$length.cat<-cut(set.m$sequence.gb_length, c(0,548,10730,11923),labels=c("pcr","gene", "wgs"))
+set.g$length.cat<-cut(set.g$sequence.gb_length, c(0,1417,10730,11923),labels=c("pcr","gene", "wgs"))
+set.l$length.cat<-cut(set.l$sequence.gb_length, c(0,5745,10730,11923),labels=c("pcr","gene", "wgs"))
+wgs$length.cat<-cut(wgs$sequence.gb_length, c(0,10730,11923),labels=c("extra", "wgs"))
+
+#add a column to identify gene
+set.n$gene=NA; set.p$gene=NA;set.m$gene=NA;set.g$gene=NA;set.l$gene=NA; wgs$gene=NA
+set.n$gene="n"; set.p$gene="p";set.m$gene="m";set.g$gene="g";set.l$gene="l";wgs$gene="wgs"
+
+#combined data
+all.aln=rbind(set.n, set.p, set.l, set.g, set.m, wgs)
+
+#right now this all.aln dataset will have multiple rows for sequences that have been broken down into genes e.g. a wgs that was originally one row (one accession id) will have been split into duplicate rows that differ only by "gene" 
+# therefore plots misrepresent data:
+all.aln$gene <- factor(all.aln$gene,levels = c("wgs","n", "p", "m", "g","l"))
+all.aln=all.aln[which(all.aln$sequence.m49_country.display_name!="Thailand"),]
+ggplot(data=subset(all.aln, gene=="wgs" |length.cat=="gene"|length.cat=="pcr"), aes(x=gene,fill = length.cat)) + geom_bar()+
+  ylab("Sequence count")+ labs(fill = "")+scale_fill_viridis(discrete=TRUE)
+
+ggplot(data=all.aln, aes(x=gene,fill =sequence.m49_country.display_name )) + geom_bar()+
+  ylab("Sequence count")+ labs(fill = "Country")+
+  theme(legend.position="top")
+
+#save_plot(file=paste(newfiles, "GeneSeq_by_extraContext.tif", sep="_"), fig = ggplot2::last_plot(), width = 12, height = 9,dpi = 300, theme = ggplot2::theme_get(), label.color = "black",label.size = 2.4, axis.textsize = 0.8, axis.titlesize = 0.75,legend.textsize = 0.4, legend.titlesize = 0.4, legend.itemsize = 0.6)
+ggplot(data=subset(all.aln, gene=="wgs" |length.cat=="gene"|length.cat=="pcr"), aes(x=gene,fill =sequence.m49_country.display_name )) + geom_bar()+
+  ylab("Sequence count")+ labs(fill = "Country")+
+  theme(legend.position="top")+ geom_vline(xintercept=which(all.aln$gene == 'wgs'))+geom_vline(xintercept =1.5, linetype="dotted")
+```
+
+#Identify duplicates
+Sometimes the same sequence is submitted under different accession numbers when it is re-sequenced or if it contains multiple genes. Aggregate rows that are from the same sequencing (all info is the same except for the gene which was split at the beginning of this code). New gene category with have all genes (ex. n, g).
+```{r}
+#Uses the sample ID (sequence.isolate) to find duplicates
+n_occur <- data.frame(table(meta$sequence.isolate))
+n_occur[n_occur$Freq > 1,]
+duplicates1=meta[meta$sequence.isolate %in% n_occur$Var1[n_occur$Freq > 1],]
+#Create new sequence data that combines rows with the same sample ID
+refine=all.aln;dim(refine)
+rownames(refine)=NULL
+refine$gene=as.character(refine$gene)
+```
+
+#Fix duplicates
+
+Sort data and categorize based on type of sequence ("gene.cat"), ex. multiple gene sequences, single genes and what gene, WGS. 
+```{r}
+#(dplyr pipeline)
+refine1=refine %>%
+  group_by(across(c(-gene))) %>%
+  summarise(gene = paste(sort(gene), collapse = ", "))
+
+#Distinguish full vs partial multi-gene sequences
+refine1=refine1 %>%
+  mutate(gene.cat=case_when(
+    nchar(gene)>1 & length.cat=="gene"~"multi-gene",
+    grepl("wgs",gene)~"wgs",
+    nchar(gene)>1 & gene=="g, l" ~"multi-gene",
+    nchar(gene)==1 & length.cat=="gene" ~gene, #so it listed the specific gene as per the "gene" col
+    nchar(gene)==1 & length.cat=="pcr" ~ gene 
+  ))
+
+#PCR= fragment genes
+levels(refine1$length.cat) <- c(levels(refine1$length.cat),"fragment")
+refine1$length.cat[refine1$length.cat=="pcr"]="fragment"
+#ordering the factors so they plot in this order
+refine1$gene.cat <- factor(refine1$gene.cat,levels = c("wgs","multi-gene", "n", "p", "m","g","l"))
+```
+
+#Plot type of sequence
+```{r}
+# Number of sequences per genome region
+ggplot(data=refine1, aes(x=gene.cat,fill = length.cat)) + geom_bar()+
+  ylab("Sequence count")+ labs(fill = "")+scale_fill_viridis(discrete=TRUE)+theme(axis.text.x = element_text(angle = 45))+xlab("Genome region")
+
+#By country
+ggplot(data=refine1, aes(x=gene.cat,fill =sequence.m49_country.display_name )) + geom_bar()+
+  ylab("Sequence count")+ labs(fill = "Country")+
+  theme(legend.position="top")+theme(axis.text.x = element_text(angle = 45))+xlab("Genome region")
+
+```
+
+#Further duplicates
+Some duplicates aren't multi-gene (due to earlier code partitioning) but could be sequenced at different times, uploaded under different accession numbers, etc. 
+```{r}
+#Identify sample ID duplicates
+n_occur=refine1 %>%
+  group_by(sequence.isolate) %>%
+  count()
+gene.dup=n_occur[which(n_occur$n>1),]
+gene.dup=gene.dup[!is.na(gene.dup$sequence.isolate),]
+
+#New category that identifies differences between sequences with the same sample ID
+# store output in new dataframe to keep track of steps
+refine2=refine1
+#have to define new output columns first first to enable use of ifelse in mutate
+refine2$linkage=NA
+refine2$duplicate.cat=NA
+#loop will compare duplicates, record their linkage and why records differ
+for (i in 1:nrow(gene.dup)){
+  duplicates=refine2[which(refine2$sequence.isolate==gene.dup$sequence.isolate[i]),]
+  compare.duplicates=Filter(function(x) any(x != x[1]), duplicates)
+  refine2= refine2 %>% 
+    #filter(sequence.isolate == gene.dup$Var1[i])%>%
+    mutate(linkage=ifelse(sequence.isolate == gene.dup$sequence.isolate[i],paste(compare.duplicates$sequence.sequenceID,collapse=","),linkage), duplicate.cat=ifelse(sequence.isolate == gene.dup$sequence.isolate[i],paste(names(compare.duplicates)[-1],collapse=","),duplicate.cat))
+}
+```
+
+#Examine duplicates
+```{r}
+unique(refine2$duplicate.cat)
+```
+
+Based on the variables listed, the reason for duplicate sequences can be identified. Different "sequence.gb_create_date", "sequence.gb_update_date" means samples were sequenced at different times; different pubmed ID's were uploaded under separate groups/projects; different sequence lengths were sequenced separately (could be WGS in one sequencing but diagnostic in another); etc. 
+
+
