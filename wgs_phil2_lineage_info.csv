@@ -1,0 +1,13 @@
+Lineage,Province,First Year,Last Year,Number of Sequences,,Level1,Level 2,Level 3
+Asian SEA4_E1,"c(""Albay"", ""Bataan"", ""Bulacan"", ""Camarines Sur"", ""Laguna"", ""Metropolitan Manila"", ""Nueva Ecija"", ""Pampanga"", ""Quezon"", ""Rizal"")",2012,2019,17,,SEA4_A1,,
+Asian SEA4_A1,"c(""Batangas"", ""Laguna"", ""Quezon"", ""unknown"")",1994,2017,5,,,SEA4_A1.1,
+Asian SEA4_A1.1,"c(""Davao del Sur"", ""Maguindanao"")",2018,2018,3,,,,SEA4_A1.1.1
+Asian SEA4_A1.1.1,"c(""Compostela Valley"", ""Davao del Norte"", ""Davao del Sur"")",2018,2018,8,,,,SEA4_A1.1.2
+Asian SEA4_A1.1.2,"c(""Davao del Norte"", ""Davao del Sur"")",2018,2019,5,,,,
+Asian SEA4_B1,"c(""Davao del Norte"", ""Davao del Sur"")",2018,2019,7,,,,
+Asian SEA4_B1.1,"c(""Davao del Norte"", ""Davao del Sur"")",2018,2018,10,,,,
+Asian SEA4_C1,Metropolitan Manila,2013,2015,3,,,,
+Asian SEA4_C1.1,"c(""Cavite"", ""Metropolitan Manila"", ""Oriental Mindoro"")",2012,2018,3,,,,
+Asian SEA4_C1.1.1,"c(""Cavite"", ""Laguna"", ""Metropolitan Manila"")",2012,2019,12,,,,
+Asian SEA4_C1.2,"c(""Batangas"", ""Cavite"", ""Laguna"", ""Metropolitan Manila"", ""Pangasinan"", ""Rizal"")",2012,2016,12,,,,
+Asian SEA4_D1,"c(""Davao del Norte"", ""Davao del Sur"")",2018,2019,16,,,,
